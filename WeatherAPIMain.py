@@ -20,11 +20,14 @@ def get_weather(city:str):
 
     try:
         response = requests.get(f'{base_url}{city}', params=params)
+        if response.status_code == 400:
+            print(f"City {city} is not available")
+            return None
         response.raise_for_status()
         return response.json()
 
-    except requests.exceptions.RequestException as e:
-        print(f"Connection error: {e}")
+    except requests.exceptions.RequestException as exception:
+        print(f"Connection error: {exception}")
         return None
 
 
@@ -34,11 +37,17 @@ def set_up_redis() -> redis.Redis:
 
 
 def get_user_city() -> str:
-    user_city =input(str("Enter City: "))
-    return user_city
+    city =input(str("Enter City: "))
+    return city
+
 
 def check_city_in_cache(r:redis.Redis, city:str):
-    cached_city = r.get(city)
+    try:
+        cached_city = r.get(city)
+
+    except redis.exceptions.ConnectionError:
+        print('Warning:Redis connection error. Working without cache')
+        cached_city = None
 
     if cached_city is not None:
         print(f"Cache for {city} is cached")
@@ -47,9 +56,15 @@ def check_city_in_cache(r:redis.Redis, city:str):
     else:
         print(f"Cache for {city} is not cached")
         weather_data = get_weather(city)
-        json_weather_data = json.dumps(weather_data, indent=4,ensure_ascii=False)
-        r.set(city, json_weather_data)
-        print_weather_data(weather_data)
+        if weather_data:
+            print_weather_data(weather_data)
+            try:
+                json_weather_data = json.dumps(weather_data, indent=4,ensure_ascii=False)
+                r.set(city, json_weather_data, ex = 43200)
+            except redis.exceptions.ConnectionError:
+                pass
+        else:
+            print('Could not find any weather data for this city')
 
 
 def print_weather_data(weather_data:dict):
@@ -61,5 +76,8 @@ def print_weather_data(weather_data:dict):
 
 
 if __name__ == "__main__":
+    r_client = set_up_redis()
     while True:
-        check_city_in_cache(set_up_redis(), get_user_city())
+        user_city = get_user_city()
+        if user_city.lower() == 'exit' : break
+        check_city_in_cache(r_client,user_city)
